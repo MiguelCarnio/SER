@@ -168,22 +168,6 @@ def carregar_roupas() -> List[Dict[str, Any]]:
         conexao.close()
 
 
-def salvar_roupas(roupas: List[Dict[str, Any]]) -> None:
-    """Substitui o conteúdo da tabela pelo conjunto recebido em uma transação."""
-    conexao = _abrir_conexao()
-    try:
-        with conexao:
-            conexao.execute("DELETE FROM roupas")
-            for roupa in roupas:
-                try:
-                    roupa_id = int(roupa["id"]) if roupa.get("id") is not None else None
-                except (TypeError, ValueError):
-                    roupa_id = None
-                _inserir_roupa(conexao, roupa, roupa_id)
-    finally:
-        conexao.close()
-
-
 def validar_roupa(roupa: Dict[str, Any]) -> List[str]:
     """Lista todos os campos ausentes ou valores fora dos conjuntos permitidos."""
     erros: List[str] = []
@@ -235,108 +219,7 @@ def add_roupa(roupa: Dict[str, Any]) -> Dict[str, Any]:
         conexao.close()
 
 
-def remover_roupa_por_id(roupa_id: int) -> bool:
-    """Remove a roupa pelo ID e informa se alguma linha foi afetada."""
-    conexao = _abrir_conexao()
-    try:
-        with conexao:
-            cursor = conexao.execute("DELETE FROM roupas WHERE id = ?", (roupa_id,))
-        return cursor.rowcount > 0
-    finally:
-        conexao.close()
-
-
 def listar_roupas() -> List[Dict[str, Any]]:
     """Expõe a consulta principal usada pela interface e pelos serviços."""
     return carregar_roupas()
-
-
-def buscar_roupas(filtros: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Filtra em memória as roupas cujos campos coincidem com todos os filtros."""
-    roupas = carregar_roupas()
-    resultado: List[Dict[str, Any]] = []
-
-    for item in roupas:
-        ok = True
-        for chave, valor in filtros.items():
-            if valor is None:
-                continue
-            if str(item.get(chave, "")).lower() != str(valor).lower():
-                ok = False
-                break
-        if ok:
-            resultado.append(item)
-
-    return resultado
-
-
-def menu_interativo() -> None:
-    """Disponibiliza operações básicas do banco pelo terminal."""
-    print("\nSistema de roupas em SQLite")
-    print("1 - adicionar roupa")
-    print("2 - listar roupas")
-    print("3 - remover roupa por id")
-    print("0 - sair")
-
-    while True:
-        opcao = input("\nEscolha: ").strip()
-
-        if opcao == "1":
-            roupa = {
-                "nome": input("Nome: "),
-                "cor": input("Cor: "),
-                "estilo": input("Estilo (casual/formal/esportivo): "),
-                "corte": input("Corte (regular/solto/ajustado/acinturado): "),
-                "temperatura": input("Temperatura (frio/calor/ambos): "),
-                "tipo": input("Tipo: "),
-                "material": input("Material (opcional): ") or "",
-                "tamanho": input("Tamanho (opcional): ") or "",
-                "genero": input("Gênero (opcional): ") or "",
-                "estacao": input("Estação (opcional): ") or "",
-                "imagem": input("Imagem (caminho/opcional): ") or "",
-                "observacoes": input("Observações (opcional): ") or "",
-            }
-            try:
-                nova = add_roupa(roupa)
-                print("Roupa adicionada com sucesso:", nova)
-            except ValueError as e:
-                print("Erro:", e)
-
-        elif opcao == "2":
-            itens = listar_roupas()
-            if not itens:
-                print("Nenhuma roupa cadastrada.")
-            else:
-                for item in itens:
-                    print(item)
-
-        elif opcao == "3":
-            itens = listar_roupas()
-            if not itens:
-                print("Nenhuma roupa cadastrada para remover.")
-                continue
-            for item in itens:
-                print(item)
-            try:
-                roupa_id = int(input("Digite o ID da roupa para remover: ").strip())
-            except ValueError:
-                print("ID inválido.")
-                continue
-
-            removido = remover_roupa_por_id(roupa_id)
-            if removido:
-                print("Roupa removida com sucesso.")
-            else:
-                print("Nenhuma roupa com esse ID foi encontrada.")
-
-        elif opcao == "0":
-            print("Saindo...")
-            break
-
-        else:
-            print("Opção inválida.")
-
-
-if __name__ == "__main__":
-    menu_interativo()
 
