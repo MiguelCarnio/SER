@@ -1,11 +1,16 @@
+"""Persistência SQLite e migração dos registros antigos do guarda-roupa."""
+
 import json
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List
 
 
+# O banco fica junto deste módulo para funcionar de qualquer diretório de execução.
 DB_PATH = Path(__file__).with_name("clothes.db")
+# Este JSON é mantido como fonte de migração para instalações antigas.
 LEGACY_JSON_PATH = Path(__file__).with_name("clothes.json")
+# A ordem é compartilhada pela montagem dos comandos SQL e dos valores inseridos.
 COLUNAS_ROUPA = (
     "nome",
     "cor",
@@ -22,6 +27,7 @@ COLUNAS_ROUPA = (
 )
 
 
+# Conjuntos aceitos pela validação antes de gravar dados no SQLite.
 VALID_TEMPERATURA = {"frio", "calor", "ambos"}
 VALID_TIPO = {
     "camiseta",
@@ -44,6 +50,7 @@ VALID_GENERO = {"masculino", "feminino", "unissex"}
 
 
 def _normalizar_registro(roupa: Dict[str, Any]) -> Dict[str, str]:
+    """Completa campos opcionais e padroniza valores textuais do registro."""
     return {
         "nome": str(roupa.get("nome") or "Roupa identificada").strip(),
         "cor": str(roupa.get("cor") or "não identificada").strip(),
@@ -65,11 +72,13 @@ def _inserir_roupa(
     roupa: Dict[str, Any],
     roupa_id: int | None = None,
 ) -> int:
+    """Insere uma roupa e preserva o ID quando está migrando dados antigos."""
     registro = _normalizar_registro(roupa)
     placeholders = ", ".join("?" for _ in COLUNAS_ROUPA)
     colunas = ", ".join(COLUNAS_ROUPA)
     valores = tuple(registro[coluna] for coluna in COLUNAS_ROUPA)
 
+    # O INSERT OR IGNORE evita duplicar IDs já presentes durante a migração.
     if roupa_id is None:
         cursor = conexao.execute(
             f"INSERT INTO roupas ({colunas}) VALUES ({placeholders})",
@@ -84,6 +93,7 @@ def _inserir_roupa(
 
 
 def _abrir_conexao() -> sqlite3.Connection:
+    """Abre o banco, garante as tabelas e executa a migração uma única vez."""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conexao = sqlite3.connect(DB_PATH, timeout=10)
     conexao.row_factory = sqlite3.Row
@@ -111,6 +121,7 @@ def _abrir_conexao() -> sqlite3.Connection:
         """
     )
 
+    # O metadado impede que o JSON legado seja importado novamente em cada acesso.
     migracao = conexao.execute(
         "SELECT valor FROM metadados WHERE chave = ?",
         ("migracao_clothes_json_v1",),
@@ -119,6 +130,7 @@ def _abrir_conexao() -> sqlite3.Connection:
         try:
             dados_antigos = json.loads(LEGACY_JSON_PATH.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
+            # Um arquivo ausente ou inválido não impede a criação do banco vazio.
             dados_antigos = []
 
         if isinstance(dados_antigos, list):
@@ -140,20 +152,24 @@ def _abrir_conexao() -> sqlite3.Connection:
 
 
 def inicializar_banco() -> None:
+    """Cria o esquema e fecha a conexão inicial usada na partida do app."""
     conexao = _abrir_conexao()
     conexao.close()
 
 
 def carregar_roupas() -> List[Dict[str, Any]]:
+    """Retorna todas as roupas em ordem de cadastro como dicionários."""
     conexao = _abrir_conexao()
     try:
         registros = conexao.execute("SELECT * FROM roupas ORDER BY id").fetchall()
         return [dict(registro) for registro in registros]
     finally:
+        # A conexão é fechada mesmo que a consulta ou conversão falhe.
         conexao.close()
 
 
 def salvar_roupas(roupas: List[Dict[str, Any]]) -> None:
+    """Substitui o conteúdo da tabela pelo conjunto recebido em uma transação."""
     conexao = _abrir_conexao()
     try:
         with conexao:
@@ -169,6 +185,7 @@ def salvar_roupas(roupas: List[Dict[str, Any]]) -> None:
 
 
 def validar_roupa(roupa: Dict[str, Any]) -> List[str]:
+    """Lista todos os campos ausentes ou valores fora dos conjuntos permitidos."""
     erros: List[str] = []
 
     campos_obrigatorios = ["nome", "cor", "estilo", "corte", "temperatura", "tipo"]
@@ -203,6 +220,7 @@ def validar_roupa(roupa: Dict[str, Any]) -> List[str]:
 
 
 def add_roupa(roupa: Dict[str, Any]) -> Dict[str, Any]:
+    """Valida, grava e devolve a roupa incluindo o ID criado no banco."""
     erros = validar_roupa(roupa)
     if erros:
         raise ValueError("; ".join(erros))
@@ -218,6 +236,7 @@ def add_roupa(roupa: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def remover_roupa_por_id(roupa_id: int) -> bool:
+    """Remove a roupa pelo ID e informa se alguma linha foi afetada."""
     conexao = _abrir_conexao()
     try:
         with conexao:
@@ -228,10 +247,12 @@ def remover_roupa_por_id(roupa_id: int) -> bool:
 
 
 def listar_roupas() -> List[Dict[str, Any]]:
+    """Expõe a consulta principal usada pela interface e pelos serviços."""
     return carregar_roupas()
 
 
 def buscar_roupas(filtros: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Filtra em memória as roupas cujos campos coincidem com todos os filtros."""
     roupas = carregar_roupas()
     resultado: List[Dict[str, Any]] = []
 
@@ -250,6 +271,7 @@ def buscar_roupas(filtros: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def menu_interativo() -> None:
+    """Disponibiliza operações básicas do banco pelo terminal."""
     print("\nSistema de roupas em SQLite")
     print("1 - adicionar roupa")
     print("2 - listar roupas")

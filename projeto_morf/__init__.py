@@ -1,1 +1,1 @@
-"""Pacote do projeto Guarda-Roupa IA."""
+"""Pacote da aplicação Guarda-Roupa IA e de seus módulos Python."""

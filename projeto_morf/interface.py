@@ -1,3 +1,5 @@
+"""Interface Tkinter do guarda-roupa, câmera e recomendações de combinação."""
+
 import threading
 import tkinter as tk
 from tempfile import NamedTemporaryFile
@@ -15,6 +17,7 @@ except ImportError:
     cv2 = None
 
 
+# Mapeia extensões aceitas para os tipos enviados ao analisador de imagens.
 TIPOS_MIME = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
@@ -26,7 +29,10 @@ TIPOS_MIME = {
 
 
 class GuardaRoupaApp:
+    """Coordena widgets, câmera, operações do banco e chamadas aos serviços."""
+
     def __init__(self, root):
+        """Prepara o estado da janela, monta os controles e liga a webcam."""
         self.root = root
         self.root.title("Guarda-Roupa IA")
         self.root.geometry("1040x700")
@@ -52,6 +58,7 @@ class GuardaRoupaApp:
         self._conectar_camera()
 
     def _configurar_estilos(self):
+        """Define a paleta e os estilos compartilhados pelos widgets ttk."""
         estilo = ttk.Style(self.root)
         estilo.theme_use("clam")
         estilo.configure("TFrame", background="#f6f7f4")
@@ -66,6 +73,7 @@ class GuardaRoupaApp:
         estilo.configure("TCombobox", padding=7, fieldbackground="#ffffff")
 
     def _montar_interface(self):
+        """Constrói a área da câmera e os controles de resultado e combinação."""
         principal = ttk.Frame(self.root, padding=(24, 20, 24, 22))
         principal.pack(fill="both", expand=True)
 
@@ -128,6 +136,7 @@ class GuardaRoupaApp:
         self.root.bind_all("<Control-v>", self._colar_imagem)
 
     def _usar_imagem(self, caminho, mensagem, temporaria=False):
+        """Usa uma imagem colada e libera qualquer arquivo temporário anterior."""
         if self.imagem_temporaria and self.imagem_temporaria != caminho:
             self.imagem_temporaria.unlink(missing_ok=True)
         self.imagem_selecionada = caminho
@@ -136,6 +145,7 @@ class GuardaRoupaApp:
         self._atualizar_rotulo_acao()
 
     def _colar_imagem(self, _evento=None):
+        """Carrega uma imagem do clipboard ao pressionar Ctrl+V."""
         try:
             conteudo = ImageGrab.grabclipboard()
         except (OSError, NotImplementedError):
@@ -181,11 +191,13 @@ class GuardaRoupaApp:
         return "break"
 
     def _redimensionar_preview(self, _evento=None):
+        """Redesenha o quadro da câmera quando o espaço de vídeo muda de tamanho."""
         if self.quadro_atual is None:
             return
         self._mostrar_quadro(self.quadro_atual)
 
     def _conectar_camera(self):
+        """Abre a webcam principal e mostra uma mensagem caso não esteja acessível."""
         if cv2 is None:
             self._definir_status("OpenCV não está instalado. Instale as dependências para usar a câmera.", erro=True)
             self.preview.configure(text="Câmera indisponível", image="")
@@ -213,6 +225,7 @@ class GuardaRoupaApp:
         self._atualizar_camera()
 
     def _atualizar_camera(self):
+        """Lê e agenda o próximo quadro para manter o preview ao vivo."""
         if self.camera is None:
             return
         sucesso, quadro = self.camera.read()
@@ -227,6 +240,7 @@ class GuardaRoupaApp:
         self.camera_after_id = self.root.after(33, self._atualizar_camera)
 
     def _mostrar_quadro(self, quadro):
+        """Espelha e ajusta um quadro da webcam ao tamanho do widget de preview."""
         largura = max(320, self.preview.winfo_width() - 8)
         altura = max(260, self.preview.winfo_height() - 8)
         espelhado = cv2.flip(quadro, 1)
@@ -238,6 +252,7 @@ class GuardaRoupaApp:
         self.preview.configure(image=self.foto_preview, text="")
 
     def _atualizar_rotulo_acao(self):
+        """Ajusta o texto e disponibilidade do botão conforme o estado da câmera."""
         if self.analisando:
             self.botao_analisar.configure(text="Analisando...")
             self.botao_analisar.state(["disabled"])
@@ -255,7 +270,9 @@ class GuardaRoupaApp:
             self.botao_analisar.state(["disabled"])
 
     def _executar_em_segundo_plano(self, tarefa, sucesso):
+        """Executa uma operação lenta fora do loop gráfico e devolve o resultado à UI."""
         def executar():
+            """Roda a tarefa e agenda seu resultado ou erro no loop Tkinter."""
             try:
                 resultado = tarefa()
             except Exception as exc:
@@ -266,11 +283,13 @@ class GuardaRoupaApp:
         threading.Thread(target=executar, daemon=True).start()
 
     def _tarefa_falhou(self, erro):
+        """Mostra uma falha de serviço e restaura os controles da janela."""
         self.analisando = False
         self._definir_status(str(erro), erro=True)
         self._habilitar_botoes()
 
     def _analisar(self):
+        """Captura o quadro atual ou usa a imagem colada e inicia a análise."""
         if self.imagem_selecionada:
             caminho = self.imagem_selecionada
             content_type = TIPOS_MIME.get(caminho.suffix.lower())
@@ -308,6 +327,7 @@ class GuardaRoupaApp:
         )
 
     def _analise_concluida(self, dados):
+        """Apresenta os atributos reconhecidos e seleciona a peça recém-salva."""
         self.analisando = False
         self._habilitar_botoes()
         roupa = dados.get("roupa_adicionada")
@@ -331,6 +351,7 @@ class GuardaRoupaApp:
         self._definir_resultado("\n".join(linhas))
 
     def _atualizar_lista_roupas(self, selecionar_id=None):
+        """Atualiza o seletor de peças preservando, quando possível, a seleção."""
         roupas = index_db.listar_roupas()
         self.roupas_por_rotulo = {
             f"{roupa['id']}  ·  {roupa['nome']}": roupa for roupa in roupas
@@ -347,9 +368,11 @@ class GuardaRoupaApp:
         self.botao_combinar.state(["!disabled"] if roupas else ["disabled"])
 
     def _selecionar_roupa(self, _evento=None):
+        """Sincroniza o ID interno com a opção atualmente escolhida no seletor."""
         self.roupa_atual_id = self.roupas_por_rotulo.get(self.seletor_roupas.get(), {}).get("id")
 
     def _combinar(self):
+        """Exige clima e peça de referência antes de iniciar a recomendação."""
         self._selecionar_roupa()
         if self.roupa_atual_id is None:
             messagebox.showinfo("Escolha uma peça", "Selecione uma roupa do guarda-roupa para comparar.")
@@ -369,6 +392,7 @@ class GuardaRoupaApp:
         )
 
     def _combinacao_concluida(self, dados):
+        """Exibe a peça recomendada ou a mensagem de ausência de combinação."""
         self._habilitar_botoes()
         combinacao = dados.get("melhor_combinacao")
         if not combinacao:
@@ -394,28 +418,34 @@ class GuardaRoupaApp:
         self._definir_resultado("\n".join(linhas))
 
     def _mostrar_foto_combinacao(self, caminho):
+        """Carrega a miniatura da peça recomendada na área de resultado."""
         imagem = ImageOps.contain(Image.open(caminho).convert("RGB"), (480, 150))
         self.foto_combinacao = ImageTk.PhotoImage(imagem)
         self.foto_combinacao_label.configure(image=self.foto_combinacao, text="")
 
     def _limpar_foto_combinacao(self):
+        """Remove a miniatura anterior quando não há uma nova recomendação."""
         self.foto_combinacao = None
         self.foto_combinacao_label.configure(image="")
 
     def _definir_status(self, texto, erro=False):
+        """Atualiza a mensagem curta de estado e destaca falhas em vermelho."""
         self.status.configure(text=texto, foreground="#a43c35" if erro else "#68746d")
 
     def _definir_resultado(self, texto):
+        """Substitui o texto de resultado e mantém o campo somente para leitura."""
         self.resultado.configure(state="normal")
         self.resultado.delete("1.0", "end")
         self.resultado.insert("1.0", texto)
         self.resultado.configure(state="disabled")
 
     def _habilitar_botoes(self):
+        """Restaura o botão principal e recarrega as roupas disponíveis."""
         self._atualizar_rotulo_acao()
         self._atualizar_lista_roupas()
 
     def _fechar(self):
+        """Cancela o ciclo da webcam, libera recursos e fecha a janela."""
         if self.camera_after_id is not None:
             self.root.after_cancel(self.camera_after_id)
         if self.camera is not None:
@@ -426,6 +456,7 @@ class GuardaRoupaApp:
 
 
 def iniciar():
+    """Cria a janela raiz e inicia o loop de eventos do Tkinter."""
     root = tk.Tk()
     GuardaRoupaApp(root)
     root.mainloop()

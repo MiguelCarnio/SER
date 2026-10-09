@@ -1,3 +1,5 @@
+"""Regras de roupas, processamento de imagens e integração com Gemini."""
+
 import json
 import os
 import unicodedata
@@ -14,14 +16,18 @@ from DataBase import index_db
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
 UPLOAD_DIR = BASE_DIR / "static" / "uploads"
+# Garante que o diretório exista antes de salvar qualquer foto reconhecida.
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+# Lê primeiro as configurações do projeto e depois as variáveis do ambiente.
 load_dotenv(PROJECT_ROOT / ".env")
 load_dotenv()
 
+# A interface continua utilizável sem chave, mas análise e combinações exigem Gemini.
 api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 client = genai.Client(api_key=api_key) if api_key else None
 
+# O modelo deve devolver atributos estruturados para persistência no guarda-roupa.
 PROMPT_ANALISE = """
 Analise a imagem da peça de vestuário e extraia as seguintes informações no formato JSON rigoroso.
 Se o objeto na imagem NÃO for uma roupa ou calçado, retorne: {"eh_roupa": false, "mensagem": "Não é uma roupa"}
@@ -39,6 +45,7 @@ Modelo do JSON desejado:
 }
 """
 
+# A lista permite tentar alternativas quando um modelo estiver indisponível.
 MODELOS_GEMINI = (
     "gemini-3.5-flash-lite",
     "gemini-3.5-flash",
@@ -60,8 +67,10 @@ MIMES_IMAGEM = {
     ".gif": "image/gif",
     ".bmp": "image/bmp",
 }
+# Limite o tamanho do envio para evitar leituras e requisições excessivas.
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 
+# Traduz rótulos produzidos pela IA para os valores aceitos pelo banco.
 TIPOS_EQUIVALENTES = {
     "camisa": "camiseta",
     "t shirt": "camiseta",
@@ -88,6 +97,7 @@ CLIMAS_VALIDOS = {"calor", "frio", "ameno"}
 
 
 def normalizar_texto(valor):
+    """Remove acentos e diferenças de caixa para comparar rótulos com segurança."""
     texto = unicodedata.normalize("NFKD", str(valor or ""))
     return "".join(
         caractere for caractere in texto if not unicodedata.combining(caractere)
@@ -95,6 +105,7 @@ def normalizar_texto(valor):
 
 
 def salvar_imagem_roupa(conteudo, content_type, filename):
+    """Valida a extensão, cria um nome não previsível e salva a imagem recebida."""
     mime_type = (content_type or "").lower()
     extensao = EXTENSOES_IMAGEM.get(mime_type)
     if not extensao:
@@ -109,6 +120,7 @@ def salvar_imagem_roupa(conteudo, content_type, filename):
 
 
 def caminho_imagem_roupa(roupa):
+    """Resolve apenas fotos pertencentes à pasta de uploads do aplicativo."""
     imagem = str(roupa.get("imagem") or "")
     if not imagem.startswith("/static/uploads/"):
         return None
@@ -120,6 +132,7 @@ def caminho_imagem_roupa(roupa):
 
 
 def roupa_para_banco(dados, imagem=""):
+    """Converte os campos livres da análise para o esquema controlado do banco."""
     categoria = normalizar_texto(dados.get("categoria"))
     tipo = TIPOS_EQUIVALENTES.get(categoria, categoria)
     if tipo not in index_db.VALID_TIPO:
@@ -157,6 +170,7 @@ def roupa_para_banco(dados, imagem=""):
 
 
 def pontuar_combinacao(nova, existente):
+    """Calcula uma pontuação heurística baseada em estilo, cor e estação."""
     pontos = 0
     estilo_novo = normalizar_texto(nova.get("estilo"))
     estilo_existente = normalizar_texto(existente.get("estilo"))
@@ -197,6 +211,7 @@ def pontuar_combinacao(nova, existente):
 
 
 def _grupo_roupa(roupa):
+    """Classifica uma peça como parte superior, inferior, vestido ou calçado."""
     tipo = normalizar_texto(roupa.get("tipo"))
     tipo = TIPOS_EQUIVALENTES.get(tipo, tipo)
     if tipo in TIPOS_PARTE_SUPERIOR:
@@ -221,6 +236,7 @@ def _grupo_roupa(roupa):
 
 
 def _eh_complementar(roupa_base, candidata):
+    """Aceita somente categorias que completam a peça de referência."""
     grupo_base = _grupo_roupa(roupa_base)
     grupo_candidata = _grupo_roupa(candidata)
     complementos = {
@@ -233,6 +249,7 @@ def _eh_complementar(roupa_base, candidata):
 
 
 def _clima_compativel(roupa, clima):
+    """Verifica se temperatura e estação cadastradas combinam com o clima escolhido."""
     if clima is None:
         return True
     clima = normalizar_texto(clima)
@@ -255,6 +272,7 @@ def _clima_compativel(roupa, clima):
 
 
 def encontrar_melhor_combinacao(nova, roupas_existentes, clima=None):
+    """Seleciona a melhor peça complementar após os filtros opcionais de clima."""
     candidatas = [
         roupa
         for roupa in roupas_existentes
@@ -270,6 +288,7 @@ def encontrar_melhor_combinacao(nova, roupas_existentes, clima=None):
 
 
 def analisar_imagem(conteudo_bytes, content_type, filename):
+    """Analisa uma foto, salva a imagem e registra a peça reconhecida no banco."""
     if client is None:
         return {"eh_roupa": False, "mensagem": "GEMINI_API_KEY não configurada."}
     if not conteudo_bytes:
@@ -280,6 +299,7 @@ def analisar_imagem(conteudo_bytes, content_type, filename):
     mime_type = "image/jpeg" if content_type == "image/jpg" else content_type or "image/jpeg"
     imagem_part = types.Part.from_bytes(data=conteudo_bytes, mime_type=mime_type)
     ultimo_erro = None
+    # Tenta cada modelo configurado até receber uma resposta JSON utilizável.
     for modelo in MODELOS_GEMINI:
         try:
             response = client.models.generate_content(
@@ -322,6 +342,7 @@ def analisar_imagem(conteudo_bytes, content_type, filename):
 
 
 def combinar_roupa(roupa_id, clima):
+    """Consulta a Gemini apenas com peças complementares adequadas ao clima."""
     if client is None:
         raise RuntimeError("GEMINI_API_KEY não configurada.")
     clima = normalizar_texto(clima)
@@ -342,6 +363,7 @@ def combinar_roupa(roupa_id, clima):
             "mensagem": f"A peça escolhida não é adequada para clima {clima}. Selecione outra peça ou outro clima.",
         }
 
+    # O filtro local impede a IA de recomendar roupas do mesmo tipo ou inadequadas.
     candidatas = [
         item
         for item in roupas
@@ -355,6 +377,7 @@ def combinar_roupa(roupa_id, clima):
             "mensagem": f"Não há uma peça complementar adequada para clima {clima} no seu guarda-roupa.",
         }
 
+    # Limita a comparação visual às opções mais promissoras do guarda-roupa.
     candidatas.sort(key=lambda item: pontuar_combinacao(roupa_base, item), reverse=True)
     candidatas = candidatas[:8]
     conteudos = [
@@ -389,6 +412,7 @@ def combinar_roupa(roupa_id, clima):
             )
 
     ultimo_erro = None
+    # Usa os mesmos modelos alternativos da análise caso haja falha temporária.
     for modelo in MODELOS_GEMINI:
         try:
             response = client.models.generate_content(
